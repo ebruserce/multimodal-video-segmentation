@@ -113,6 +113,7 @@ while cap.isOpened():
     pose_result = pose_detector.detect_for_video(mp_image, timestamp_ms)
 
     overlay = frame.copy()
+    all_head_masks = []
 
     if pose_result.segmentation_masks and pose_result.pose_landmarks:
         for pose_landmarks, mp_mask in zip(pose_result.pose_landmarks,
@@ -128,9 +129,9 @@ while cap.isOpened():
             # ======================
             # HEAD REGION
             # ======================
-            # TODO: remove comment?
-            # head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
-            head_indices = [lm["LEFT_SHOULDER"], lm["RIGHT_SHOULDER"]]
+
+            head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
+            shoulder_indices = [lm["LEFT_SHOULDER"], lm["RIGHT_SHOULDER"]]
 
             head_points = []
             for idx in head_indices:
@@ -141,8 +142,16 @@ while cap.isOpened():
 
             head_points = np.array(head_points, dtype=np.int32)
 
-            # Compute center of head landmarks TODO: CURRENTLY USING SHOULDERS TO TEST
-            center_x = int(np.mean(head_points[:, 0]))
+            shoulder_points = []
+            for idx in shoulder_indices:
+                landmark = pose_landmarks[idx]
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
+                shoulder_points.append([x,y])
+            shoulder_points = np.array(shoulder_points, dtype=np.int32)
+
+            # Compute center of radius using head points for vertical and shoulder for horizontal
+            center_x = int(np.mean(shoulder_points[:, 0]))
             center_y = int(np.mean(head_points[:, 1]))
 
             radius = int(knee_width * 0.6)  # adjust scaling factor if needed
@@ -152,8 +161,7 @@ while cap.isOpened():
             cv2.circle(head_mask, (center_x, center_y), radius, 1, -1)
             head_mask = head_mask.astype(bool)
 
-            # Intersect with segmentation mask (TODO: remove?)
-            # head_mask = np.logical_and(head_mask == 1, binary_mask)
+            all_head_masks.append(head_mask)
 
             # ======================
             # HAND REGION
@@ -201,10 +209,6 @@ while cap.isOpened():
 
             lh_mask = lh_mask.astype(bool)
             rh_mask = rh_mask.astype(bool)
-
-            # Intersect with segmentation mask (TODO: remove?)
-            # lh_mask = np.logical_and(lh_mask == 1, binary_mask)
-            # rh_mask = np.logical_and(rh_mask == 1, binary_mask)
 
             # ======================
             # ARM REGION
@@ -294,6 +298,8 @@ while cap.isOpened():
         for mp_mask in pose_result.segmentation_masks:
             mask = np.squeeze(mp_mask.numpy_view())
             person_combined = np.logical_or(person_combined, mask > cfg["settings"]["segmentation_threshold"])
+        for hm in all_head_masks:
+                person_combined = np.logical_or(person_combined, hm)
         obj_combined_mask = np.logical_and(obj_combined_mask, np.logical_not(person_combined))
 
     # Draw object segmentations onto overlay
