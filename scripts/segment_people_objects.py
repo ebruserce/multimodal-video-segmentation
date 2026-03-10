@@ -14,6 +14,9 @@ if local_cfg_path.exists():
         local = yaml.safe_load(f)
     cfg["paths"].update(local["paths"])
 
+# Set up output video settings
+alpha = cfg["settings"]["alpha"]
+
 # Set up paths
 ROOT = Path(cfg["paths"].get("project_root", "."))
 POSE_MODEL_PATH = ROOT / cfg["paths"]["model"]["pose_landmarker"]
@@ -44,14 +47,14 @@ ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
 
 pose_options = PoseLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=str(POSE_MODEL_PATH)),
-    num_poses=2,
+    num_poses=cfg["settings"]["num_poses"],
     output_segmentation_masks=True,
     running_mode=VisionRunningMode.VIDEO)
 
 obj_options = ObjectDetectorOptions(
     base_options=BaseOptions(model_asset_path=OBJ_MODEL_PATH),
     max_results=-1,
-    score_threshold=0.5,
+    score_threshold=cfg["settings"]["segmentation_threshold"],
     category_denylist=["person"],  # To avoid overlap with pose segmentation mask
     running_mode=VisionRunningMode.VIDEO)
 
@@ -81,7 +84,10 @@ total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 frame_index = 0
 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to the first frame
 
-alpha = 0.7  # transparency level
+# Function to convert pose landmarks to pixel coordinates
+def to_pixel(pose_landmarks, idx):
+    lm = pose_landmarks[idx]
+    return int(lm.x * width), int(lm.y * height)
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -103,12 +109,6 @@ while cap.isOpened():
 
         for pose_landmarks, mp_mask in zip(result.pose_landmarks,
                                         result.segmentation_masks):
-
-            # Function to convert pose landmarks to pixel coordinates
-            def to_pixel(idx):
-                lm = pose_landmarks[idx]
-                return int(lm.x * width), int(lm.y * height)
-            
             mask = np.squeeze(mp_mask.numpy_view())
             binary_mask = mask > 0.5
 
@@ -131,10 +131,10 @@ while cap.isOpened():
             center_y = int(np.mean(head_points[:, 1]))
 
             # Estimate head size from shoulder distance (more stable than ears)
-            left_shoulder = pose_landmarks[11]
-            right_shoulder = pose_landmarks[12]
+            left_knee = pose_landmarks[25]
+            right_knee = pose_landmarks[26]
 
-            shoulder_width = abs((left_shoulder.x - right_shoulder.x) * width)
+            shoulder_width = abs((left_knee.x - right_knee.x) * width)
 
             radius = int(shoulder_width * 0.75)  # adjust scaling factor if needed
             radius = max(radius, 20)  # minimum radius safeguard
@@ -201,8 +201,8 @@ while cap.isOpened():
             arm_mask = np.zeros((height, width), dtype=np.uint8)
 
             # Thickness proportional to body size
-            shoulder_left = to_pixel(11)
-            shoulder_right = to_pixel(12)
+            shoulder_left = to_pixel(pose_landmarks, 11)
+            shoulder_right = to_pixel(pose_landmarks, 12)
 
             body_width = int(abs(shoulder_left[0] - shoulder_right[0]) * 0.45)
             thickness = max(body_width, 15)  # minimum thickness
@@ -210,15 +210,15 @@ while cap.isOpened():
             # LEFT ARM
             left_points = [11, 13, 15]
             for i in range(len(left_points) - 1):
-                p1 = to_pixel(left_points[i])
-                p2 = to_pixel(left_points[i+1])
+                p1 = to_pixel(pose_landmarks, left_points[i])
+                p2 = to_pixel(pose_landmarks, left_points[i+1])
                 cv2.line(arm_mask, p1, p2, 1, thickness)
 
             # RIGHT ARM
             right_points = [12, 14, 16]
             for i in range(len(right_points) - 1):
-                p1 = to_pixel(right_points[i])
-                p2 = to_pixel(right_points[i+1])
+                p1 = to_pixel(pose_landmarks, right_points[i])
+                p2 = to_pixel(pose_landmarks, right_points[i+1])
                 cv2.line(arm_mask, p1, p2, 1, thickness)
 
             # Intersect with segmentation mask
