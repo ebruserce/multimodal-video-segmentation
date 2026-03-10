@@ -1,0 +1,19 @@
+# Local config
+configs/paths.local.yaml
+
+# MediaPipe models
+*.task
+*.tflite
+models/
+
+# Data
+data/
+
+# Python
+__pycache__/
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
