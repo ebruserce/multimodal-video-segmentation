@@ -9,7 +9,7 @@ paths:
 
 settings:
   video_input_extension: "*.avi"
-  video_output_extension: "mp4"
+  video_output_extension: "mp4v"
   alpha: 0.7
   num_poses: 2
   segmentation_threshold: 0.5

@@ -14,7 +14,7 @@ if local_cfg_path.exists():
         local = yaml.safe_load(f)
     cfg["paths"].update(local["paths"])
 
-# Set up settings
+# Settings
 lm = {name:i for i, name in enumerate(cfg["pose_landmarks"])}
 alpha = cfg["settings"]["alpha"]
 
@@ -28,6 +28,32 @@ OUTPUT_FOLDER = ROOT / cfg["paths"]["data"]["output"]
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 video_files = list(VIDEO_FOLDER.glob(cfg["settings"]["video_input_extension"]))
+
+# Convert pose landmarks to pixel coordinates
+def to_pixel(pose_landmarks, idx):
+    landmark = pose_landmarks[idx]
+    return int(landmark.x * width), int(landmark.y * height)
+
+# Draw bounding boxes and labels on image
+def visualize(image, detection_result):
+    annotated_image = image.copy()
+
+    for detection in detection_result.detections:
+        # Draw bounding box
+        bbox = detection.bounding_box
+        start_point = (bbox.origin_x, bbox.origin_y)
+        end_point = (bbox.origin_x + bbox.width, bbox.origin_y + bbox.height)
+        cv2.rectangle(annotated_image, start_point, end_point, (0, 255, 0), 2)
+
+        # Draw label and score
+        category = detection.categories[0]
+        category_name = category.category_name if category.category_name else ''
+        probability = round(category.score, 2)
+        result_text = f"{category_name} ({probability})"
+        text_location = (start_point[0], start_point[1] - 10)
+        cv2.putText(annotated_image, result_text, text_location, cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 255, 0), 2)
+    return annotated_image
 
 # For testing purposes, only process the first video file
 if video_files:
@@ -74,7 +100,7 @@ if not ret:
 height, width = frame.shape[:2]
 
 output_path = OUTPUT_FOLDER / f"{video_path.stem}_segmented.mp4"
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+fourcc = cv2.VideoWriter_fourcc(*cfg["settings"]["video_output_extension"])
 out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
 print(f"Writing output to: {output_path}")
@@ -84,11 +110,6 @@ total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
 frame_index = 0
 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to the first frame
-
-# Function to convert pose landmarks to pixel coordinates
-def to_pixel(pose_landmarks, idx):
-    lm = pose_landmarks[idx]
-    return int(lm.x * width), int(lm.y * height)
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -102,16 +123,20 @@ while cap.isOpened():
     )
 
     timestamp_ms = int((frame_index / fps) * 1000)
-    result = pose_detector.detect_for_video(mp_image, timestamp_ms)
+    pose_result = pose_detector.detect_for_video(mp_image, timestamp_ms)
 
     overlay = frame.copy()
 
-    if result.segmentation_masks and result.pose_landmarks:
-
-        for pose_landmarks, mp_mask in zip(result.pose_landmarks,
-                                        result.segmentation_masks):
+    if pose_result.segmentation_masks and pose_result.pose_landmarks:
+        for pose_landmarks, mp_mask in zip(pose_result.pose_landmarks,
+                                        pose_result.segmentation_masks):
             mask = np.squeeze(mp_mask.numpy_view())
             binary_mask = mask > cfg["settings"]["segmentation_threshold"]
+
+            # Use distance between knees to estimate various thicknesses
+            left_knee = pose_landmarks[lm["LEFT_KNEE"]]
+            right_knee = pose_landmarks[lm["RIGHT_KNEE"]]
+            knee_width = abs((left_knee.x - right_knee.x) * width)
 
             # ======================
             # HEAD REGION
@@ -120,9 +145,9 @@ while cap.isOpened():
 
             head_points = []
             for idx in head_indices:
-                lm = pose_landmarks[idx]
-                x = int(lm.x * width)
-                y = int(lm.y * height)
+                landmark = pose_landmarks[idx]
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
                 head_points.append([x, y])
 
             head_points = np.array(head_points, dtype=np.int32)
@@ -130,9 +155,6 @@ while cap.isOpened():
             # Compute center of head landmarks
             center_x = int(np.mean(head_points[:, 0]))
             center_y = int(np.mean(head_points[:, 1]))
-
-            # Estimate head size from shoulder distance (more stable than ears)
-            knee_width = abs((lm["LEFT_KNEE"].x - lm["RIGHT_KNEE"].x) * width)
 
             radius = int(knee_width * 0.75)  # adjust scaling factor if needed
             radius = max(radius, cfg["settings"]["min_radius"])  # minimum radius safeguard
@@ -151,18 +173,18 @@ while cap.isOpened():
 
             lh_points = []
             for idx in lh_indices:
-                lm = pose_landmarks[idx]
-                x = int(lm.x * width)
-                y = int(lm.y * height)
+                landmark = pose_landmarks[idx]
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
                 lh_points.append([x, y])
 
             lh_points = np.array(lh_points, dtype=np.int32)
             
             rh_points = []
             for idx in rh_indices:
-                lm = pose_landmarks[idx]
-                x = int(lm.x * width)
-                y = int(lm.y * height)
+                landmark = pose_landmarks[idx]
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
                 rh_points.append([x, y])
 
             rh_points = np.array(rh_points, dtype=np.int32)
@@ -197,13 +219,7 @@ while cap.isOpened():
             # ARM REGION
             # ======================          
             arm_mask = np.zeros((height, width), dtype=np.uint8)
-
-            # Thickness proportional to body size
-            shoulder_left = to_pixel(pose_landmarks, lm["LEFT_SHOULDER"])
-            shoulder_right = to_pixel(pose_landmarks, lm["RIGHT_SHOULDER"])
-
-            body_width = int(abs(shoulder_left[0] - shoulder_right[0]) * 0.45)
-            thickness = max(body_width, 15)  # minimum thickness
+            thickness = max(int(knee_width * 0.45), 15)
 
             # LEFT ARM
             left_points = [lm["LEFT_SHOULDER"], lm["LEFT_ELBOW"], lm["LEFT_WRIST"]]
@@ -273,6 +289,10 @@ while cap.isOpened():
             overlay = cv2.addWeighted(overlay, 1.0, green_layer, alpha, 0)
             overlay = cv2.addWeighted(overlay, 1.0, dark_green_layer, alpha, 0)
             overlay = cv2.addWeighted(overlay, 1.0, red_layer, alpha, 0)
+
+        obj_result = obj_detector.detect_for_video(mp_image, timestamp_ms)
+        annotated_frame = visualize(rgb_frame, obj_result)
+        annotated_bgr = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
 
     out.write(overlay)
     frame_index += 1
