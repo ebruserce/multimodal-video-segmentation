@@ -34,13 +34,31 @@ def to_pixel(pose_landmarks, idx):
     landmark = pose_landmarks[idx]
     return int(landmark.x * width), int(landmark.y * height)
 
-# Helper to generate rough ellipse mask for objects
-def get_object_mask(frame, bbox):
+# Helper to generate a mask for objects, TODO: sg_mask not working (or maybe just runs veeeeery slow..?)
+def get_object_mask(frame, bbox, mask_type="ellipse"):
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-    center = (bbox.origin_x + bbox.width // 2, bbox.origin_y + bbox.height // 2)
-    axes = (bbox.width // 2, bbox.height // 2)
-    cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
-    return mask
+    if mask_type == "ellipse":
+        center = (bbox.origin_x + bbox.width // 2, bbox.origin_y + bbox.height // 2)
+        axes = (bbox.width // 2, bbox.height // 2)
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
+        return mask
+    if mask_type == "rectangle":
+        cv2.rectangle(mask, (bbox.origin_x, bbox.origin_y), 
+                      (bbox.origin_x + bbox.width, bbox.origin_y + bbox.height), 1, -1)
+        return mask
+    if mask_type == "sg_mask":
+        bgd_model = np.zeros((1, 65), np.float64)
+        fgd_model = np.zeros((1, 65), np.float64)
+        
+        rect = (bbox.origin_x, bbox.origin_y, bbox.width, bbox.height)
+        cv2.grabCut(frame, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        
+        # Pixels marked as foreground or probable foreground
+        binary = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0).astype(np.uint8)
+        return binary
+
+    raise ValueError(f"Uknown mask type: {type}")
+
 
 # For testing purposes, only process the first video file
 if video_files:
@@ -230,9 +248,6 @@ while cap.isOpened():
                 p2 = to_pixel(pose_landmarks, right_points[i+1])
                 cv2.line(arm_mask, p1, p2, 1, thickness)
 
-            # Intersect with segmentation mask
-            arm_mask = np.logical_and(arm_mask == 1, binary_mask)
-
             # ======================
             # PRIORITY ENFORCEMENT (HEAD > HANDS > ARMS > BODY)
             # ======================
@@ -289,7 +304,7 @@ while cap.isOpened():
     # Build combined object mask from all detections
     obj_combined_mask = np.zeros((height, width), dtype=np.uint8)
     for detection in obj_result.detections:
-        obj_mask = get_object_mask(frame, detection.bounding_box)
+        obj_mask = get_object_mask(frame, detection.bounding_box, mask_type="ellipse")
         obj_combined_mask = np.logical_or(obj_combined_mask, obj_mask)
 
     # Remove person regions from object mask
@@ -299,7 +314,7 @@ while cap.isOpened():
             mask = np.squeeze(mp_mask.numpy_view())
             person_combined = np.logical_or(person_combined, mask > cfg["settings"]["segmentation_threshold"])
         for hm in all_head_masks:
-                person_combined = np.logical_or(person_combined, hm)
+            person_combined = np.logical_or(person_combined, hm)
         obj_combined_mask = np.logical_and(obj_combined_mask, np.logical_not(person_combined))
 
     # Draw object segmentations onto overlay
