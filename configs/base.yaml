@@ -1,6 +1,7 @@
 paths:
   models:
     pose_landmarker: models/pose_landmarker_heavy.task
+    object_detector: models/object_detector_lite0.tflite
   data:
     input_images: data/input/images
     input_videos: data/input/videos
