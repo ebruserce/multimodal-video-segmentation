@@ -20,8 +20,8 @@ alpha = cfg["settings"]["alpha"]
 
 # Set up paths
 ROOT = Path(cfg["paths"].get("project_root", "."))
-POSE_MODEL_PATH = ROOT / cfg["paths"]["model"]["pose_landmarker"]
-OBJ_MODEL_PATH = ROOT / cfg["paths"]["model"]["object_detector"]
+POSE_MODEL_PATH = ROOT / cfg["paths"]["models"]["pose_landmarker"]
+OBJ_MODEL_PATH = ROOT / cfg["paths"]["models"]["object_detector"]
 VIDEO_FOLDER = ROOT / cfg["paths"]["data"]["input_videos"]
 OUTPUT_FOLDER = ROOT / cfg["paths"]["data"]["output"]
 
@@ -29,31 +29,18 @@ OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 video_files = list(VIDEO_FOLDER.glob(cfg["settings"]["video_input_extension"]))
 
-# Convert pose landmarks to pixel coordinates
+# Helper to convert pose landmarks to pixel coordinates
 def to_pixel(pose_landmarks, idx):
     landmark = pose_landmarks[idx]
     return int(landmark.x * width), int(landmark.y * height)
 
-# Draw bounding boxes and labels on image
-def visualize(image, detection_result):
-    annotated_image = image.copy()
-
-    for detection in detection_result.detections:
-        # Draw bounding box
-        bbox = detection.bounding_box
-        start_point = (bbox.origin_x, bbox.origin_y)
-        end_point = (bbox.origin_x + bbox.width, bbox.origin_y + bbox.height)
-        cv2.rectangle(annotated_image, start_point, end_point, (0, 255, 0), 2)
-
-        # Draw label and score
-        category = detection.categories[0]
-        category_name = category.category_name if category.category_name else ''
-        probability = round(category.score, 2)
-        result_text = f"{category_name} ({probability})"
-        text_location = (start_point[0], start_point[1] - 10)
-        cv2.putText(annotated_image, result_text, text_location, cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (0, 255, 0), 2)
-    return annotated_image
+# Helper to generate rough ellipse mask for objects
+def get_object_mask(frame, bbox):
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    center = (bbox.origin_x + bbox.width // 2, bbox.origin_y + bbox.height // 2)
+    axes = (bbox.width // 2, bbox.height // 2)
+    cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
+    return mask
 
 # For testing purposes, only process the first video file
 if video_files:
@@ -79,9 +66,9 @@ pose_options = PoseLandmarkerOptions(
     running_mode=VisionRunningMode.VIDEO)
 
 obj_options = ObjectDetectorOptions(
-    base_options=BaseOptions(model_asset_path=OBJ_MODEL_PATH),
-    max_results=-1,
-    score_threshold=cfg["settings"]["segmentation_threshold"],
+    base_options=BaseOptions(model_asset_path=str(OBJ_MODEL_PATH)),
+    max_results=cfg["settings"]["max_results"],
+    score_threshold=cfg["settings"]["score_threshold"],
     category_denylist=["person"],  # To avoid overlap with pose segmentation mask
     running_mode=VisionRunningMode.VIDEO)
 
@@ -141,7 +128,9 @@ while cap.isOpened():
             # ======================
             # HEAD REGION
             # ======================
-            head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
+            # TODO: remove comment?
+            # head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
+            head_indices = [lm["LEFT_SHOULDER"], lm["RIGHT_SHOULDER"]]
 
             head_points = []
             for idx in head_indices:
@@ -152,24 +141,25 @@ while cap.isOpened():
 
             head_points = np.array(head_points, dtype=np.int32)
 
-            # Compute center of head landmarks
+            # Compute center of head landmarks TODO: CURRENTLY USING SHOULDERS TO TEST
             center_x = int(np.mean(head_points[:, 0]))
             center_y = int(np.mean(head_points[:, 1]))
 
-            radius = int(knee_width * 0.75)  # adjust scaling factor if needed
+            radius = int(knee_width * 0.6)  # adjust scaling factor if needed
             radius = max(radius, cfg["settings"]["min_radius"])  # minimum radius safeguard
 
             head_mask = np.zeros((height, width), dtype=np.uint8)
             cv2.circle(head_mask, (center_x, center_y), radius, 1, -1)
+            head_mask = head_mask.astype(bool)
 
-            # Intersect with segmentation mask
-            head_mask = np.logical_and(head_mask == 1, binary_mask)
+            # Intersect with segmentation mask (TODO: remove?)
+            # head_mask = np.logical_and(head_mask == 1, binary_mask)
 
             # ======================
             # HAND REGION
             # ======================
-            lh_indices = [lm["LEFT_WRIST"], lm["LEFT_PINKY"], lm["LEFT_INDEX"], lm["LEFT_THUMB"]]
-            rh_indices = [lm["RIGHT_WRIST"], lm["RIGHT_PINKY"], lm["RIGHT_INDEX"], lm["RIGHT_THUMB"]]
+            lh_indices = [lm["LEFT_PINKY"], lm["LEFT_INDEX"], lm["LEFT_THUMB"]]
+            rh_indices = [lm["RIGHT_PINKY"], lm["RIGHT_INDEX"], lm["RIGHT_THUMB"]]
 
             lh_points = []
             for idx in lh_indices:
@@ -196,8 +186,6 @@ while cap.isOpened():
 
             lh_width = np.linalg.norm(lh_points[0] - lh_points[-1])
             rh_width = np.linalg.norm(rh_points[0] - rh_points[-1])
-            lh_thickness = max(lh_width, cfg["settings"]["min_thickness"])
-            rh_thickness = max(rh_width, cfg["settings"]["min_thickness"])
 
             # Compute center of hand landmarks
             center_lh_x = int(np.mean(lh_points[:, 0]))
@@ -211,9 +199,12 @@ while cap.isOpened():
             cv2.circle(lh_mask, (center_lh_x, center_lh_y), radius_lh, 1, -1)
             cv2.circle(rh_mask, (center_rh_x, center_rh_y), radius_rh, 1, -1)
 
-            # Intersect with segmentation mask
-            lh_mask = np.logical_and(lh_mask == 1, binary_mask)
-            rh_mask = np.logical_and(rh_mask == 1, binary_mask)
+            lh_mask = lh_mask.astype(bool)
+            rh_mask = rh_mask.astype(bool)
+
+            # Intersect with segmentation mask (TODO: remove?)
+            # lh_mask = np.logical_and(lh_mask == 1, binary_mask)
+            # rh_mask = np.logical_and(rh_mask == 1, binary_mask)
 
             # ======================
             # ARM REGION
@@ -279,20 +270,36 @@ while cap.isOpened():
             blue_layer = np.zeros_like(frame, dtype=np.uint8)
             dark_green_layer = np.zeros_like(frame, dtype=np.uint8)
 
-            red_layer[head_mask] = [0, 0, 255]      # Red
-            green_layer[arm_mask] = [0, 255, 0]     # Green
-            dark_green_layer[lh_mask] = [0, 128, 0] # Dark Green
-            dark_green_layer[rh_mask] = [0, 128, 0] # Dark Green
-            blue_layer[body_mask] = [255, 0, 0]     # Blue
+            red_layer[head_mask.astype(bool)] = [0, 0, 255]      # Red
+            green_layer[arm_mask.astype(bool)] = [0, 255, 0]     # Green
+            dark_green_layer[lh_mask.astype(bool)] = [0, 128, 0] # Dark Green
+            dark_green_layer[rh_mask.astype(bool)] = [0, 128, 0] # Dark Green
+            blue_layer[body_mask.astype(bool)] = [255, 0, 0]     # Blue
 
             overlay = cv2.addWeighted(overlay, 1.0, blue_layer, alpha, 0)
             overlay = cv2.addWeighted(overlay, 1.0, green_layer, alpha, 0)
             overlay = cv2.addWeighted(overlay, 1.0, dark_green_layer, alpha, 0)
             overlay = cv2.addWeighted(overlay, 1.0, red_layer, alpha, 0)
 
-        obj_result = obj_detector.detect_for_video(mp_image, timestamp_ms)
-        annotated_frame = visualize(rgb_frame, obj_result)
-        annotated_bgr = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
+    obj_result = obj_detector.detect_for_video(mp_image, timestamp_ms)
+    # Build combined object mask from all detections
+    obj_combined_mask = np.zeros((height, width), dtype=np.uint8)
+    for detection in obj_result.detections:
+        obj_mask = get_object_mask(frame, detection.bounding_box)
+        obj_combined_mask = np.logical_or(obj_combined_mask, obj_mask)
+
+    # Remove person regions from object mask
+    if pose_result.segmentation_masks:
+        person_combined = np.zeros((height, width), dtype=bool)
+        for mp_mask in pose_result.segmentation_masks:
+            mask = np.squeeze(mp_mask.numpy_view())
+            person_combined = np.logical_or(person_combined, mask > cfg["settings"]["segmentation_threshold"])
+        obj_combined_mask = np.logical_and(obj_combined_mask, np.logical_not(person_combined))
+
+    # Draw object segmentations onto overlay
+    yellow_layer = np.zeros_like(frame, dtype=np.uint8)
+    yellow_layer[obj_combined_mask] = [0, 255, 255]  # BGR yellow
+    overlay = cv2.addWeighted(overlay, 1.0, yellow_layer, alpha, 0)
 
     out.write(overlay)
     frame_index += 1

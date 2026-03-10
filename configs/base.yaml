@@ -13,6 +13,8 @@ settings:
   alpha: 0.7
   num_poses: 2
   segmentation_threshold: 0.5
+  max_results: 10
+  score_threshold: 0.2
   min_radius: 20
   min_thickness: 15
 
