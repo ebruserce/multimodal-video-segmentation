@@ -4,6 +4,13 @@ import numpy as np
 import mediapipe as mp
 from pathlib import Path
 
+BaseOptions = mp.tasks.BaseOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
+PoseLandmarker = mp.tasks.vision.PoseLandmarker
+PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+ObjectDetector = mp.tasks.vision.ObjectDetector
+ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
+
 # Load configs
 with open("configs/base.yaml") as f:
     cfg = yaml.safe_load(f)
@@ -29,10 +36,18 @@ OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 video_files = list(VIDEO_FOLDER.glob(cfg["settings"]["video_input_extension"]))
 
-# Helper to convert pose landmarks to pixel coordinates
+# Helpers to convert pose landmarks to pixel coordinates
 def to_pixel(pose_landmarks, idx):
     landmark = pose_landmarks[idx]
-    return int(landmark.x * width), int(landmark.y * height)
+    return [int(landmark.x * width), int(landmark.y * height)]
+
+def to_positions(pose_landmarks, indices, d_type=np.uint8):
+    points = []
+    for idx in indices:
+        points.append(to_pixel(pose_landmarks, idx))
+    
+    return np.array(points, dtype=d_type)
+
 
 # Helper to generate a mask for objects, TODO: sg_mask not working (or maybe just runs veeeeery slow..?)
 def get_object_mask(frame, bbox, mask_type="ellipse"):
@@ -59,7 +74,6 @@ def get_object_mask(frame, bbox, mask_type="ellipse"):
 
     raise ValueError(f"Uknown mask type: {type}")
 
-
 # For testing purposes, only process the first video file
 if video_files:
     video_path = video_files[0]
@@ -68,15 +82,7 @@ else:
     print("No video files found in the specified folder.")
     exit(1)
 
-BaseOptions = mp.tasks.BaseOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
-
-PoseLandmarker = mp.tasks.vision.PoseLandmarker
-PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-
-ObjectDetector = mp.tasks.vision.ObjectDetector
-ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
-
+# Step 1: Initialize PoseLandmarker and ObjectDetector objects
 pose_options = PoseLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=str(POSE_MODEL_PATH)),
     num_poses=cfg["settings"]["num_poses"],
@@ -90,7 +96,6 @@ obj_options = ObjectDetectorOptions(
     category_denylist=["person"],  # To avoid overlap with pose segmentation mask
     running_mode=VisionRunningMode.VIDEO)
 
-# Step 1: Initialize PoseLandmarker and ObjectDetector objects
 pose_detector = PoseLandmarker.create_from_options(pose_options)
 obj_detector = ObjectDetector.create_from_options(obj_options)
 
@@ -98,6 +103,7 @@ obj_detector = ObjectDetector.create_from_options(obj_options)
 cap = cv2.VideoCapture(str(video_path))
 fps = cap.get(cv2.CAP_PROP_FPS)
 
+# Make sure we can read video
 ret, frame = cap.read()
 if not ret:
     raise RuntimeError("Could not read video")
@@ -144,29 +150,13 @@ while cap.isOpened():
             right_knee = pose_landmarks[lm["RIGHT_KNEE"]]
             knee_width = abs((left_knee.x - right_knee.x) * width)
 
-            # ======================
-            # HEAD REGION
-            # ======================
 
+            # HEAD REGION
             head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
             shoulder_indices = [lm["LEFT_SHOULDER"], lm["RIGHT_SHOULDER"]]
 
-            head_points = []
-            for idx in head_indices:
-                landmark = pose_landmarks[idx]
-                x = int(landmark.x * width)
-                y = int(landmark.y * height)
-                head_points.append([x, y])
-
-            head_points = np.array(head_points, dtype=np.int32)
-
-            shoulder_points = []
-            for idx in shoulder_indices:
-                landmark = pose_landmarks[idx]
-                x = int(landmark.x * width)
-                y = int(landmark.y * height)
-                shoulder_points.append([x,y])
-            shoulder_points = np.array(shoulder_points, dtype=np.int32)
+            head_points = to_positions(pose_landmarks, head_indices, d_type=np.int32)
+            shoulder_points = to_positions(pose_landmarks, shoulder_indices, d_type=np.int32)
 
             # Compute center of radius using head points for vertical and shoulder for horizontal
             center_x = int(np.mean(shoulder_points[:, 0]))
@@ -181,29 +171,13 @@ while cap.isOpened():
 
             all_head_masks.append(head_mask)
 
-            # ======================
+
             # HAND REGION
-            # ======================
             lh_indices = [lm["LEFT_PINKY"], lm["LEFT_INDEX"], lm["LEFT_THUMB"]]
             rh_indices = [lm["RIGHT_PINKY"], lm["RIGHT_INDEX"], lm["RIGHT_THUMB"]]
 
-            lh_points = []
-            for idx in lh_indices:
-                landmark = pose_landmarks[idx]
-                x = int(landmark.x * width)
-                y = int(landmark.y * height)
-                lh_points.append([x, y])
-
-            lh_points = np.array(lh_points, dtype=np.int32)
-            
-            rh_points = []
-            for idx in rh_indices:
-                landmark = pose_landmarks[idx]
-                x = int(landmark.x * width)
-                y = int(landmark.y * height)
-                rh_points.append([x, y])
-
-            rh_points = np.array(rh_points, dtype=np.int32)
+            lh_points = to_positions(pose_landmarks, lh_indices, d_type=np.int32)
+            rh_points = to_positions(pose_landmarks, rh_indices, d_type=np.int32)
 
             lh_mask = np.zeros((height, width), dtype=np.uint8)
             rh_mask = np.zeros((height, width), dtype=np.uint8)
@@ -228,9 +202,8 @@ while cap.isOpened():
             lh_mask = lh_mask.astype(bool)
             rh_mask = rh_mask.astype(bool)
 
-            # ======================
-            # ARM REGION
-            # ======================          
+
+            # ARM REGION         
             arm_mask = np.zeros((height, width), dtype=np.uint8)
             thickness = max(int(knee_width * 0.45), 15)
 
@@ -248,9 +221,8 @@ while cap.isOpened():
                 p2 = to_pixel(pose_landmarks, right_points[i+1])
                 cv2.line(arm_mask, p1, p2, 1, thickness)
 
-            # ======================
+
             # PRIORITY ENFORCEMENT (HEAD > HANDS > ARMS > BODY)
-            # ======================
             lh_mask = np.logical_and(lh_mask, np.logical_not(head_mask))
             rh_mask = np.logical_and(rh_mask, np.logical_not(head_mask))
 
@@ -281,9 +253,8 @@ while cap.isOpened():
                 )
             )
 
-            # ======================
+
             # COLOR LAYERS
-            # ======================
             red_layer = np.zeros_like(frame, dtype=np.uint8)
             green_layer = np.zeros_like(frame, dtype=np.uint8)
             blue_layer = np.zeros_like(frame, dtype=np.uint8)
@@ -325,6 +296,7 @@ while cap.isOpened():
     out.write(overlay)
     frame_index += 1
 
+    # Indicate percent progress to help with debugging
     if frame_index % 100 == 0:
         percent = (frame_index / total_frames) * 100
         print(f"{percent:.1f}% complete")
