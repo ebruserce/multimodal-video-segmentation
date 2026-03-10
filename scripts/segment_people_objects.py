@@ -14,7 +14,8 @@ if local_cfg_path.exists():
         local = yaml.safe_load(f)
     cfg["paths"].update(local["paths"])
 
-# Set up output video settings
+# Set up settings
+lm = {name:i for i, name in enumerate(cfg["pose_landmarks"])}
 alpha = cfg["settings"]["alpha"]
 
 # Set up paths
@@ -110,12 +111,12 @@ while cap.isOpened():
         for pose_landmarks, mp_mask in zip(result.pose_landmarks,
                                         result.segmentation_masks):
             mask = np.squeeze(mp_mask.numpy_view())
-            binary_mask = mask > 0.5
+            binary_mask = mask > cfg["settings"]["segmentation_threshold"]
 
             # ======================
             # HEAD REGION
             # ======================
-            head_indices = list(range(0, 11))
+            head_indices = list(range(lm["NOSE"], lm["LEFT_SHOULDER"]))
 
             head_points = []
             for idx in head_indices:
@@ -131,13 +132,10 @@ while cap.isOpened():
             center_y = int(np.mean(head_points[:, 1]))
 
             # Estimate head size from shoulder distance (more stable than ears)
-            left_knee = pose_landmarks[25]
-            right_knee = pose_landmarks[26]
+            knee_width = abs((lm["LEFT_KNEE"].x - lm["RIGHT_KNEE"].x) * width)
 
-            shoulder_width = abs((left_knee.x - right_knee.x) * width)
-
-            radius = int(shoulder_width * 0.75)  # adjust scaling factor if needed
-            radius = max(radius, 20)  # minimum radius safeguard
+            radius = int(knee_width * 0.75)  # adjust scaling factor if needed
+            radius = max(radius, cfg["settings"]["min_radius"])  # minimum radius safeguard
 
             head_mask = np.zeros((height, width), dtype=np.uint8)
             cv2.circle(head_mask, (center_x, center_y), radius, 1, -1)
@@ -148,8 +146,8 @@ while cap.isOpened():
             # ======================
             # HAND REGION
             # ======================
-            lh_indices = [17, 19, 21]
-            rh_indices = [18, 20, 22]
+            lh_indices = [lm["LEFT_WRIST"], lm["LEFT_PINKY"], lm["LEFT_INDEX"], lm["LEFT_THUMB"]]
+            rh_indices = [lm["RIGHT_WRIST"], lm["RIGHT_PINKY"], lm["RIGHT_INDEX"], lm["RIGHT_THUMB"]]
 
             lh_points = []
             for idx in lh_indices:
@@ -176,8 +174,8 @@ while cap.isOpened():
 
             lh_width = np.linalg.norm(lh_points[0] - lh_points[-1])
             rh_width = np.linalg.norm(rh_points[0] - rh_points[-1])
-            lh_thickness = max(lh_width, 15)
-            rh_thickness = max(rh_width, 15)
+            lh_thickness = max(lh_width, cfg["settings"]["min_thickness"])
+            rh_thickness = max(rh_width, cfg["settings"]["min_thickness"])
 
             # Compute center of hand landmarks
             center_lh_x = int(np.mean(lh_points[:, 0]))
@@ -185,8 +183,8 @@ while cap.isOpened():
             center_rh_x = int(np.mean(rh_points[:, 0]))
             center_rh_y = int(np.mean(rh_points[:, 1]))
 
-            radius_lh = max(int(lh_width * 2), 20)
-            radius_rh = max(int(rh_width * 2), 20)
+            radius_lh = max(int(lh_width * 2), cfg["settings"]["min_radius"])
+            radius_rh = max(int(rh_width * 2), cfg["settings"]["min_radius"])
 
             cv2.circle(lh_mask, (center_lh_x, center_lh_y), radius_lh, 1, -1)
             cv2.circle(rh_mask, (center_rh_x, center_rh_y), radius_rh, 1, -1)
@@ -201,21 +199,21 @@ while cap.isOpened():
             arm_mask = np.zeros((height, width), dtype=np.uint8)
 
             # Thickness proportional to body size
-            shoulder_left = to_pixel(pose_landmarks, 11)
-            shoulder_right = to_pixel(pose_landmarks, 12)
+            shoulder_left = to_pixel(pose_landmarks, lm["LEFT_SHOULDER"])
+            shoulder_right = to_pixel(pose_landmarks, lm["RIGHT_SHOULDER"])
 
             body_width = int(abs(shoulder_left[0] - shoulder_right[0]) * 0.45)
             thickness = max(body_width, 15)  # minimum thickness
 
             # LEFT ARM
-            left_points = [11, 13, 15]
+            left_points = [lm["LEFT_SHOULDER"], lm["LEFT_ELBOW"], lm["LEFT_WRIST"]]
             for i in range(len(left_points) - 1):
                 p1 = to_pixel(pose_landmarks, left_points[i])
                 p2 = to_pixel(pose_landmarks, left_points[i+1])
                 cv2.line(arm_mask, p1, p2, 1, thickness)
 
             # RIGHT ARM
-            right_points = [12, 14, 16]
+            right_points = [lm["RIGHT_SHOULDER"], lm["RIGHT_ELBOW"], lm["RIGHT_WRIST"]]
             for i in range(len(right_points) - 1):
                 p1 = to_pixel(pose_landmarks, right_points[i])
                 p2 = to_pixel(pose_landmarks, right_points[i+1])
