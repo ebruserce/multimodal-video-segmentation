@@ -17,6 +17,7 @@ settings:
   score_threshold: 0.2
   min_radius: 20
   min_thickness: 15
+  mask_dilation_kernel: 21  # pixels to expand beyond body border, must be odd
 
 pose_landmarks:
   - NOSE

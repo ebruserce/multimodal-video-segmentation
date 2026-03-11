@@ -145,6 +145,11 @@ while cap.isOpened():
             mask = np.squeeze(mp_mask.numpy_view())
             binary_mask = mask > cfg["settings"]["segmentation_threshold"]
 
+            # Expand mask slightly beyond body borders
+            kernel_size = cfg["settings"]["mask_dilation_kernel"]
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            binary_mask = cv2.dilate(binary_mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+
             # Use distance between knees to estimate various thicknesses
             left_knee = pose_landmarks[lm["LEFT_KNEE"]]
             right_knee = pose_landmarks[lm["RIGHT_KNEE"]]
