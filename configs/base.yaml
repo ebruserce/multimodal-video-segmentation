@@ -19,6 +19,7 @@ settings:
   min_radius: 20
   min_thickness: 15
   mask_dilation_kernel: 21  # pixels to expand beyond body border, must be odd
+  reference_video: "AM_A1_S5_B2_GA_D1_F1"
 
 pose_landmarks:
   - NOSE
