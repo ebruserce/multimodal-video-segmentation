@@ -118,7 +118,7 @@ paths:
 These steps are remaining before the poster deadline:
 
 ### Ebru
-- [ ] Verify segmentation output looks correct across all 9 videos
+- [ ] Verify segmentation output looks correct across all 5 videos
 - [ ] Confirm reference video is set correctly in `base.yaml`
 - [ ] Investigate height normalization across videos (people may sit at different heights/distances)
 
