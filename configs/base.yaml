@@ -6,6 +6,7 @@ paths:
     input_images: data/input/images
     input_videos: data/input/videos
     output: data/output
+    landmarks: data/landmarks
 
 settings:
   video_input_extension: "*.avi"
