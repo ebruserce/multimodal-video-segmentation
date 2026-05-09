@@ -16,10 +16,14 @@ settings:
   segmentation_threshold: 0.5
   max_results: 10
   score_threshold: 0.2
-  min_radius: 20
-  min_thickness: 15
+  max_head_radius: 120
+  min_head_radius: 110
+  max_arm_thickness: 80
+  min_arm_thickness: 75
+  max_hand_radius: 65
+  min_hand_radius: 55
   mask_dilation_kernel: 21  # pixels to expand beyond body border, must be odd
-  reference_video: "AM_A1_S5_B2_GA_D1_F1"
+  reference_video: "AM_A7_S4_B6_GM_D1_F1"
 
 pose_landmarks:
   - NOSE
