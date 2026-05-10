@@ -16,7 +16,7 @@ if local_cfg_path.exists():
 
 # Set up paths
 ROOT = Path(cfg["paths"].get("project_root", "."))
-MODEL_PATH = ROOT / cfg["paths"]["model"]["pose_landmarker"]
+MODEL_PATH = ROOT / cfg["paths"]["models"]["pose_landmarker"]
 VIDEO_FOLDER = ROOT / cfg["paths"]["data"]["input_videos"]
 OUTPUT_FOLDER = ROOT / cfg["paths"]["data"]["output"]
 
