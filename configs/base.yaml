@@ -7,6 +7,7 @@ paths:
     input_videos: data/input/videos
     output: data/output
     landmarks: data/landmarks
+    gaze_folder: data/input/gaze
 
 settings:
   video_input_extension: "*.avi"
