@@ -180,7 +180,6 @@ def compute_segmentations(pose_csv_path, vid_w, vid_h,
             head_cy = int(np.mean([p[1] for p in head_pts]))         # y = mean of head points
 
             head_r = int(shoulder_w * head_dilation)
-            head_r = max(min_head_radius, min(head_r, max_head_radius))
 
             seg[f"{label}_head_cx"]     = head_cx
             seg[f"{label}_head_cy"]     = head_cy
