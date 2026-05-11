@@ -77,7 +77,7 @@ def run_pipeline(video_path, gaze_paths, cfg):
         pid = extract_id(gaze_path.name)
         print(f"\n[3/4] Gaze locations: {pid}")
         gaze_loc_csv = output_folder / f"{video_path.stem}_{pid}_gaze_locations.csv"
-        results = compute_gaze_locations(gaze_path, seg_csv, vid_w, vid_h)
+        results = compute_gaze_locations(gaze_path, seg_csv, mask_npy, vid_w, vid_h)  # added mask_npy
         save_gaze_locations(results, gaze_loc_csv)
 
         print(f"[4/4] Validation: {pid}")

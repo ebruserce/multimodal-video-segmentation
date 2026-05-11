@@ -36,25 +36,26 @@ def point_in_thick_line(x, y, x1, y1, x2, y2, thickness):
 
 CANVAS_W, CANVAS_H = 1680, 1050
 
-def classify_gaze_point(x, y, seg, canvas_w=CANVAS_W, canvas_h=CANVAS_H):
+def classify_gaze_point(x, y, seg, body_mask_canvas,
+                         canvas_w=CANVAS_W, canvas_h=CANVAS_H):
     """
     Classify a single gaze point against segmentation regions.
     Priority: screen > activity > head > hands > arms > body > bg
-    Returns region label string.
+    body_mask_canvas: 2D bool array (canvas_h, canvas_w) for this frame,
+                      or None if not available.
     """
-    # am_screen: outside the original video area (gray borders)
-    # We detect this by checking if the point is outside the video bounds
-    # seg contains activity_x etc which implicitly defines canvas usage,
-    # but we need vid bounds — passed via seg dict
     vid_x1 = seg.get("vid_cx1", 0)
     vid_x2 = seg.get("vid_cx2", canvas_w)
     vid_y1 = seg.get("vid_cy1", 0)
     vid_y2 = seg.get("vid_cy2", canvas_h)
 
+    ix, iy = int(x), int(y)
+
+    # am_screen: outside original video area
     if not (vid_x1 <= x <= vid_x2 and vid_y1 <= y <= vid_y2):
         return "am_screen"
 
-    # am_activity (takes priority over hands, arms, body)
+    # am_activity
     if seg["activity_x"] != "" and point_in_rect(
         x, y,
         int(seg["activity_x"]), int(seg["activity_y"]),
@@ -62,7 +63,7 @@ def classify_gaze_point(x, y, seg, canvas_w=CANVAS_W, canvas_h=CANVAS_H):
     ):
         return "am_activity"
 
-    # HEAD (highest priority among people regions)
+    # HEAD
     for label, aoi in [("a1", "am_a1head"), ("a2", "am_a2head")]:
         if seg[f"{label}_head_cx"] != "" and point_in_circle(
             x, y,
@@ -73,25 +74,23 @@ def classify_gaze_point(x, y, seg, canvas_w=CANVAS_W, canvas_h=CANVAS_H):
             return aoi
 
     # HANDS
-    for label, laoi, raoi in [("a1", "am_a1hands", "am_a1hands"),
-                               ("a2", "am_a2hands", "am_a2hands")]:
+    for label, aoi in [("a1", "am_a1hands"), ("a2", "am_a2hands")]:
         if seg[f"{label}_lhand_cx"] != "":
             if point_in_circle(x, y,
                                int(seg[f"{label}_lhand_cx"]),
                                int(seg[f"{label}_lhand_cy"]),
                                int(seg[f"{label}_lhand_radius"])):
-                return laoi
+                return aoi
             if point_in_circle(x, y,
                                int(seg[f"{label}_rhand_cx"]),
                                int(seg[f"{label}_rhand_cy"]),
                                int(seg[f"{label}_rhand_radius"])):
-                return raoi
+                return aoi
 
     # ARMS
     for label, aoi in [("a1", "am_a1arms"), ("a2", "am_a2arms")]:
         if seg[f"{label}_larm_x1"] != "":
             t = int(seg[f"{label}_arm_thickness"])
-            # Left arm: shoulder->elbow, elbow->wrist
             if point_in_thick_line(x, y,
                                    int(seg[f"{label}_larm_x1"]), int(seg[f"{label}_larm_y1"]),
                                    int(seg[f"{label}_larm_x2"]), int(seg[f"{label}_larm_y2"]), t):
@@ -100,7 +99,6 @@ def classify_gaze_point(x, y, seg, canvas_w=CANVAS_W, canvas_h=CANVAS_H):
                                    int(seg[f"{label}_larm_x2"]), int(seg[f"{label}_larm_y2"]),
                                    int(seg[f"{label}_larm_x3"]), int(seg[f"{label}_larm_y3"]), t):
                 return aoi
-            # Right arm
             if point_in_thick_line(x, y,
                                    int(seg[f"{label}_rarm_x1"]), int(seg[f"{label}_rarm_y1"]),
                                    int(seg[f"{label}_rarm_x2"]), int(seg[f"{label}_rarm_y2"]), t):
@@ -110,10 +108,22 @@ def classify_gaze_point(x, y, seg, canvas_w=CANVAS_W, canvas_h=CANVAS_H):
                                    int(seg[f"{label}_rarm_x3"]), int(seg[f"{label}_rarm_y3"]), t):
                 return aoi
 
-    # BODY (inside video bounds but no other region matched)
+    # BODY — use segmentation mask, split left/right by canvas center
+    if body_mask_canvas is not None:
+        if 0 <= iy < canvas_h and 0 <= ix < canvas_w:
+            if body_mask_canvas[iy, ix]:
+                # Determine which person based on canvas x midpoint
+                canvas_mid_x = canvas_w // 2
+                if x < canvas_mid_x:
+                    return "am_a1body"
+                else:
+                    return "am_a2body"
+
     return "am_bg"
 
-def compute_gaze_locations(gaze_csv_path, seg_csv_path, vid_w, vid_h,
+
+def compute_gaze_locations(gaze_csv_path, seg_csv_path, mask_npy_path,
+                            vid_w, vid_h,
                             canvas_w=CANVAS_W, canvas_h=CANVAS_H):
     """
     For each valid gaze point, determine which segmentation region it falls in.
@@ -122,23 +132,30 @@ def compute_gaze_locations(gaze_csv_path, seg_csv_path, vid_w, vid_h,
     gaze_df = pd.read_csv(gaze_csv_path)
     seg_df  = pd.read_csv(seg_csv_path)
 
-    # Compute video bounds on canvas for am_screen detection
+    # Load masks — use mmap for memory efficiency on large files
+    masks = np.load(str(mask_npy_path), mmap_mode='r')
+
+    # Compute video bounds on canvas
     cx1 = (canvas_w - vid_w) // 2
     cx2 = cx1 + vid_w
     cy1 = (canvas_h - vid_h) // 2
     cy2 = cy1 + vid_h
 
-    # Build seg lookup by timestamp_ms for fast access
+    # Build seg lookup by timestamp_ms
     seg_by_ts = {int(row["timestamp_ms"]): row.to_dict()
                  for _, row in seg_df.iterrows()}
     all_timestamps = sorted(seg_by_ts.keys())
 
+    # Build frame index lookup by timestamp for mask access
+    frame_by_ts = {int(row["timestamp_ms"]): int(row["frame"])
+                   for _, row in seg_df.iterrows()}
+
     results = []
 
     for _, gaze_row in gaze_df.iterrows():
-        t   = int(gaze_row["t"])
-        sx  = gaze_row["sx"]
-        sy  = gaze_row["sy"]
+        t     = int(gaze_row["t"])
+        sx    = gaze_row["sx"]
+        sy    = gaze_row["sy"]
         valid = int(gaze_row["valid"])
 
         if not valid or pd.isna(sx) or pd.isna(sy):
@@ -147,18 +164,33 @@ def compute_gaze_locations(gaze_csv_path, seg_csv_path, vid_w, vid_h,
 
         sx, sy = float(sx), float(sy)
 
-        # Find closest segmentation frame by timestamp
+        # Find closest segmentation frame
         closest_ts = min(all_timestamps, key=lambda ts: abs(ts - t))
-        seg = seg_by_ts[closest_ts]
+        seg = seg_by_ts[closest_ts].copy()
         seg["vid_cx1"] = cx1
         seg["vid_cx2"] = cx2
         seg["vid_cy1"] = cy1
         seg["vid_cy2"] = cy2
 
-        predicted_aoi = classify_gaze_point(sx, sy, seg, canvas_w, canvas_h)
+        # Get body mask for this frame in canvas space
+        frame_idx = frame_by_ts.get(closest_ts)
+        body_mask_canvas = None
+        if frame_idx is not None and frame_idx < len(masks):
+            # Place video-space mask onto canvas
+            body_mask_vid = masks[frame_idx]           # (vid_h, vid_w)
+            body_mask_canvas = np.zeros((canvas_h, canvas_w), dtype=bool)
+            vy1 = max(0, -((canvas_h - vid_h) // 2))
+            vy2 = vy1 + (cy2 - cy1)
+            vx1 = max(0, -((canvas_w - vid_w) // 2))
+            vx2 = vx1 + (cx2 - cx1)
+            body_mask_canvas[cy1:cy2, cx1:cx2] = body_mask_vid[vy1:vy2, vx1:vx2]
+
+        predicted_aoi = classify_gaze_point(sx, sy, seg, body_mask_canvas,
+                                             canvas_w, canvas_h)
         results.append({"t": t, "sx": sx, "sy": sy, "predicted_aoi": predicted_aoi})
 
     return results
+
 
 def save_gaze_locations(results, output_path):
     with open(output_path, "w", newline="") as f:
@@ -171,12 +203,12 @@ def save_gaze_locations(results, output_path):
 if __name__ == "__main__":
     import re
     cfg = load_config()
-    ROOT = Path(cfg["paths"].get("project_root", "."))
-    video_folder    = ROOT / cfg["paths"]["data"]["input_videos"]
-    gaze_folder     = ROOT / cfg["paths"]["data"]["gaze_folder"]
+    ROOT             = Path(cfg["paths"].get("project_root", "."))
+    video_folder     = ROOT / cfg["paths"]["data"]["input_videos"]
+    gaze_folder      = ROOT / cfg["paths"]["data"]["gaze_folder"]
     landmarks_folder = ROOT / cfg["paths"]["data"]["landmarks"]
-    frames_folder   = landmarks_folder / "frames"
-    output_folder   = ROOT / cfg["paths"]["data"]["output"]
+    frames_folder    = landmarks_folder / "frames"
+    output_folder    = ROOT / cfg["paths"]["data"]["output"]
     output_folder.mkdir(parents=True, exist_ok=True)
 
     video_files = list(video_folder.glob(cfg["settings"]["video_input_extension"]))
@@ -190,12 +222,13 @@ if __name__ == "__main__":
         exit(1)
 
     video_path = video_files[0]
-    cap = cv2.VideoCapture(str(video_path))
+    cap   = cv2.VideoCapture(str(video_path))
     vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    seg_csv = frames_folder / f"{video_path.stem}_segmentations.csv"
+    seg_csv  = frames_folder / f"{video_path.stem}_segmentations.csv"
+    mask_npy = frames_folder / f"{video_path.stem}_masks.npy"
 
     def extract_id(fname):
         match = re.search(r'~~([^~]+)~~', fname)
@@ -204,7 +237,7 @@ if __name__ == "__main__":
     for gaze_path in gaze_files:
         pid = extract_id(gaze_path.name)
         print(f"Processing gaze file: {pid}")
-        results = compute_gaze_locations(gaze_path, seg_csv, vid_w, vid_h)
+        results = compute_gaze_locations(gaze_path, seg_csv, mask_npy, vid_w, vid_h)
         out_path = output_folder / f"{video_path.stem}_{pid}_gaze_locations.csv"
         save_gaze_locations(results, out_path)
 
