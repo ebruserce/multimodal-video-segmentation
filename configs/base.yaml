@@ -25,6 +25,11 @@ settings:
   min_hand_radius: 55
   mask_dilation_kernel: 21  # pixels to expand beyond body border, must be odd
   reference_video: "AM_A7_S4_B6_GM_D1_F1"
+  head_dilation: 0.75
+  hand_dilation: 2.0
+  arm_dilation: 0.45
+  activity_dilation: 1.0
+  seg_video_alpha: 0.0
 
 pose_landmarks:
   - NOSE
