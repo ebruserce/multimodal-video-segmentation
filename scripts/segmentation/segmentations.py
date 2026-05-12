@@ -376,38 +376,56 @@ if __name__ == "__main__":
     output_folder    = ROOT / cfg["paths"]["data"]["output"]
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    video_files = list(video_folder.glob(cfg["settings"]["video_input_extension"]))
+    video_files = sorted(video_folder.glob(cfg["settings"]["video_input_extension"]))
     if not video_files:
         print("No video files found.")
         exit(1)
 
-    video_path = video_files[0]
-    cap = cv2.VideoCapture(str(video_path))
-    vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
+    print(f"Found {len(video_files)} video(s).")
 
-    pose_csv  = frames_folder / f"{video_path.stem}_pose.csv"
-    mask_npy  = frames_folder / f"{video_path.stem}_masks.npy"
-    seg_csv   = frames_folder / f"{video_path.stem}_segmentations.csv"
-    seg_video = output_folder / f"{video_path.stem}_segmentation.mp4"
+    for video_path in video_files:
+        print(f"\n{'=' * 60}")
+        print(f"Processing video: {video_path.stem}")
+        print(f"{'=' * 60}")
 
-    rows = compute_segmentations(
-        pose_csv, vid_w, vid_h,
-        head_dilation=cfg["settings"].get("head_dilation", 0.75),
-        hand_dilation=cfg["settings"].get("hand_dilation", 2.0),
-        arm_dilation=cfg["settings"].get("arm_dilation", 0.45),
-        activity_dilation=cfg["settings"].get("activity_dilation", 1.0),
-        min_head_radius=cfg["settings"]["min_head_radius"],
-        max_head_radius=cfg["settings"]["max_head_radius"],
-        min_hand_radius=cfg["settings"]["min_hand_radius"],
-        max_hand_radius=cfg["settings"]["max_hand_radius"],
-        min_arm_thickness=cfg["settings"]["min_arm_thickness"],
-        max_arm_thickness=cfg["settings"]["max_arm_thickness"],
-    )
-    save_segmentations(rows, seg_csv)
-    render_segmentation_video(
-        video_path, seg_csv, mask_npy, seg_video,
-        video_alpha=cfg["settings"].get("seg_video_alpha", 0.0)
-    )
-    print("Done.")
+        cap = cv2.VideoCapture(str(video_path))
+        vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+
+        pose_csv  = frames_folder / f"{video_path.stem}_pose.csv"
+        mask_npy  = frames_folder / f"{video_path.stem}_masks.npy"
+        seg_csv   = frames_folder / f"{video_path.stem}_segmentations.csv"
+        seg_video = output_folder / f"{video_path.stem}_segmentation.mp4"
+
+        if not pose_csv.exists():
+            print(f"Missing pose CSV, skipping: {pose_csv}")
+            continue
+
+        if not mask_npy.exists():
+            print(f"Missing mask file, skipping: {mask_npy}")
+            continue
+
+        rows = compute_segmentations(
+            pose_csv, vid_w, vid_h,
+            head_dilation=cfg["settings"].get("head_dilation", 0.75),
+            hand_dilation=cfg["settings"].get("hand_dilation", 2.0),
+            arm_dilation=cfg["settings"].get("arm_dilation", 0.45),
+            activity_dilation=cfg["settings"].get("activity_dilation", 1.0),
+            min_head_radius=cfg["settings"]["min_head_radius"],
+            max_head_radius=cfg["settings"]["max_head_radius"],
+            min_hand_radius=cfg["settings"]["min_hand_radius"],
+            max_hand_radius=cfg["settings"]["max_hand_radius"],
+            min_arm_thickness=cfg["settings"]["min_arm_thickness"],
+            max_arm_thickness=cfg["settings"]["max_arm_thickness"],
+        )
+
+        save_segmentations(rows, seg_csv)
+
+        # UNCOMMENT TO GENERATE SEGMENTATION VIDEO FOR EACH VIDEO
+        render_segmentation_video(
+            video_path, seg_csv, mask_npy, seg_video,
+            video_alpha=cfg["settings"].get("seg_video_alpha", 0.0)
+        )
+
+    print("\nAll videos processed.")

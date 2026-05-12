@@ -23,7 +23,7 @@ project/
 │   ├── base.yaml               # Main config (paths, settings, reference video name)
 │   └── paths.local.yaml        # Local path overrides (not committed)
 ├── data/
-│   ├── input_videos/           # Raw stimulus .mp4 files
+│   ├── input/           # Raw stimulus .mp4 files
 │   ├── output/                 # Segmented images + reference image
 │   └── landmarks/              # Head center CSVs + shifts CSV
 ├── models/                     # MediaPipe model files

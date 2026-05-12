@@ -124,31 +124,33 @@ def classify_gaze_point(x, y, seg, body_mask_canvas,
 
 def compute_gaze_locations(gaze_csv_path, seg_csv_path, mask_npy_path,
                             vid_w, vid_h,
+                            participant_id,
+                            video_name,
                             canvas_w=CANVAS_W, canvas_h=CANVAS_H):
     """
     For each valid gaze point, determine which segmentation region it falls in.
-    Returns list of dicts with t, sx, sy, predicted_aoi.
+    Returns one row per gaze point with participant_id, video_name, frame, t, sx, sy, predicted_aoi.
     """
     gaze_df = pd.read_csv(gaze_csv_path)
     seg_df  = pd.read_csv(seg_csv_path)
 
-    # Load masks — use mmap for memory efficiency on large files
     masks = np.load(str(mask_npy_path), mmap_mode='r')
 
-    # Compute video bounds on canvas
     cx1 = (canvas_w - vid_w) // 2
     cx2 = cx1 + vid_w
     cy1 = (canvas_h - vid_h) // 2
     cy2 = cy1 + vid_h
 
-    # Build seg lookup by timestamp_ms
-    seg_by_ts = {int(row["timestamp_ms"]): row.to_dict()
-                 for _, row in seg_df.iterrows()}
+    seg_by_ts = {
+        int(row["timestamp_ms"]): row.to_dict()
+        for _, row in seg_df.iterrows()
+    }
     all_timestamps = sorted(seg_by_ts.keys())
 
-    # Build frame index lookup by timestamp for mask access
-    frame_by_ts = {int(row["timestamp_ms"]): int(row["frame"])
-                   for _, row in seg_df.iterrows()}
+    frame_by_ts = {
+        int(row["timestamp_ms"]): int(row["frame"])
+        for _, row in seg_df.iterrows()
+    }
 
     results = []
 
@@ -158,87 +160,156 @@ def compute_gaze_locations(gaze_csv_path, seg_csv_path, mask_npy_path,
         sy    = gaze_row["sy"]
         valid = int(gaze_row["valid"])
 
+        closest_ts = min(all_timestamps, key=lambda ts: abs(ts - t))
+        frame_idx = frame_by_ts.get(closest_ts)
+
+        base_row = {
+            "video_name": video_name,
+            "participant_id": participant_id,
+            "frame": frame_idx,
+            "t": t,
+            "sx": sx,
+            "sy": sy,
+        }
+
         if not valid or pd.isna(sx) or pd.isna(sy):
-            results.append({"t": t, "sx": sx, "sy": sy, "predicted_aoi": "invalid"})
+            results.append({**base_row, "predicted_aoi": "invalid"})
             continue
 
         sx, sy = float(sx), float(sy)
 
-        # Find closest segmentation frame
-        closest_ts = min(all_timestamps, key=lambda ts: abs(ts - t))
         seg = seg_by_ts[closest_ts].copy()
         seg["vid_cx1"] = cx1
         seg["vid_cx2"] = cx2
         seg["vid_cy1"] = cy1
         seg["vid_cy2"] = cy2
 
-        # Get body mask for this frame in canvas space
-        frame_idx = frame_by_ts.get(closest_ts)
         body_mask_canvas = None
         if frame_idx is not None and frame_idx < len(masks):
-            # Place video-space mask onto canvas
-            body_mask_vid = masks[frame_idx]           # (vid_h, vid_w)
+            body_mask_vid = masks[frame_idx]
             body_mask_canvas = np.zeros((canvas_h, canvas_w), dtype=bool)
+
             vy1 = max(0, -((canvas_h - vid_h) // 2))
             vy2 = vy1 + (cy2 - cy1)
             vx1 = max(0, -((canvas_w - vid_w) // 2))
             vx2 = vx1 + (cx2 - cx1)
+
             body_mask_canvas[cy1:cy2, cx1:cx2] = body_mask_vid[vy1:vy2, vx1:vx2]
 
-        predicted_aoi = classify_gaze_point(sx, sy, seg, body_mask_canvas,
-                                             canvas_w, canvas_h)
-        results.append({"t": t, "sx": sx, "sy": sy, "predicted_aoi": predicted_aoi})
+        predicted_aoi = classify_gaze_point(
+            sx, sy, seg, body_mask_canvas, canvas_w, canvas_h
+        )
+
+        results.append({**base_row, "predicted_aoi": predicted_aoi})
 
     return results
 
 
 def save_gaze_locations(results, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["t", "sx", "sy", "predicted_aoi"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "video_name",
+                "participant_id",
+                "frame",
+                "t",
+                "sx",
+                "sy",
+                "predicted_aoi",
+            ]
+        )
         writer.writeheader()
         writer.writerows(results)
+
     print(f"Saved gaze locations to: {output_path}")
 
 
 if __name__ == "__main__":
     import re
+
     cfg = load_config()
     ROOT             = Path(cfg["paths"].get("project_root", "."))
     video_folder     = ROOT / cfg["paths"]["data"]["input_videos"]
-    gaze_folder      = ROOT / cfg["paths"]["data"]["gaze_folder"]
+    gaze_root        = ROOT / cfg["paths"]["data"]["gaze_folder"]
     landmarks_folder = ROOT / cfg["paths"]["data"]["landmarks"]
     frames_folder    = landmarks_folder / "frames"
     output_folder    = ROOT / cfg["paths"]["data"]["output"]
-    output_folder.mkdir(parents=True, exist_ok=True)
 
-    video_files = list(video_folder.glob(cfg["settings"]["video_input_extension"]))
-    gaze_files  = list(gaze_folder.glob("*.csv"))
+    gaze_output_root = output_folder / "gaze_locations"
+    gaze_output_root.mkdir(parents=True, exist_ok=True)
+
+    video_files = sorted(video_folder.glob(cfg["settings"]["video_input_extension"]))
 
     if not video_files:
         print("No video files found.")
         exit(1)
-    if not gaze_files:
-        print("No gaze files found.")
-        exit(1)
-
-    video_path = video_files[0]
-    cap   = cv2.VideoCapture(str(video_path))
-    vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-
-    seg_csv  = frames_folder / f"{video_path.stem}_segmentations.csv"
-    mask_npy = frames_folder / f"{video_path.stem}_masks.npy"
 
     def extract_id(fname):
         match = re.search(r'~~([^~]+)~~', fname)
-        return match.group(1) if match else fname
+        return match.group(1) if match else Path(fname).stem
 
-    for gaze_path in gaze_files:
-        pid = extract_id(gaze_path.name)
-        print(f"Processing gaze file: {pid}")
-        results = compute_gaze_locations(gaze_path, seg_csv, mask_npy, vid_w, vid_h)
-        out_path = output_folder / f"{video_path.stem}_{pid}_gaze_locations.csv"
-        save_gaze_locations(results, out_path)
+    print(f"Found {len(video_files)} video(s).")
 
-    print("Done.")
+    for video_path in video_files:
+        video_name = video_path.stem
+
+        print(f"\n{'=' * 60}")
+        print(f"Processing video: {video_name}")
+        print(f"{'=' * 60}")
+
+        video_gaze_folder = gaze_root / video_name
+
+        if not video_gaze_folder.exists():
+            print(f"Missing gaze folder for video, skipping: {video_gaze_folder}")
+            continue
+
+        gaze_files = sorted(video_gaze_folder.glob("*.csv"))
+
+        if not gaze_files:
+            print(f"No gaze files found in: {video_gaze_folder}")
+            continue
+
+        cap = cv2.VideoCapture(str(video_path))
+        vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+
+        seg_csv  = frames_folder / f"{video_name}_segmentations.csv"
+        mask_npy = frames_folder / f"{video_name}_masks.npy"
+
+        if not seg_csv.exists():
+            print(f"Missing segmentation CSV, skipping: {seg_csv}")
+            continue
+
+        if not mask_npy.exists():
+            print(f"Missing mask file, skipping: {mask_npy}")
+            continue
+
+        combined_results = []
+
+        for gaze_path in gaze_files:
+            participant_id = extract_id(gaze_path.name)
+
+            print(f"  Processing participant: {participant_id}")
+
+            results = compute_gaze_locations(
+                gaze_csv_path=gaze_path,
+                seg_csv_path=seg_csv,
+                mask_npy_path=mask_npy,
+                vid_w=vid_w,
+                vid_h=vid_h,
+                participant_id=participant_id,
+                video_name=video_name,
+            )
+
+            combined_results.extend(results)
+
+        video_output_folder = gaze_output_root / video_name
+        out_path = video_output_folder / f"{video_name}_gaze_locations_all.csv"
+
+        save_gaze_locations(combined_results, out_path)
+
+    print("\nDone.")

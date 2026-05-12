@@ -130,20 +130,36 @@ if __name__ == "__main__":
     frames_folder    = landmarks_folder / "frames"
     frames_folder.mkdir(parents=True, exist_ok=True)
 
-    video_files = list(video_folder.glob(cfg["settings"]["video_input_extension"]))
+    video_files = sorted(video_folder.glob(cfg["settings"]["video_input_extension"]))
     if not video_files:
         print("No video files found.")
         exit(1)
 
-    video_path = video_files[0]
-    print(f"Processing: {video_path.stem}")
+    print(f"Found {len(video_files)} video(s).")
 
-    rows, masks, fps = get_pose_coordinates(
-        video_path, model_path, cfg["settings"]["num_poses"]
-    )
-    save_pose_coordinates(
-        rows, masks,
-        frames_folder / f"{video_path.stem}_pose.csv",
-        frames_folder / f"{video_path.stem}_masks.npy",
-    )
-    print("Done.")
+    for video_path in video_files:
+        print(f"\n{'=' * 60}")
+        print(f"Processing: {video_path.stem}")
+        print(f"{'=' * 60}")
+
+        output_csv_path  = frames_folder / f"{video_path.stem}_pose.csv"
+        output_mask_path = frames_folder / f"{video_path.stem}_masks.npy"
+
+        if output_csv_path.exists() and output_mask_path.exists():
+            print("Pose coordinates and masks already exist, skipping.")
+            continue
+
+        rows, masks, fps = get_pose_coordinates(
+            video_path,
+            model_path,
+            cfg["settings"]["num_poses"]
+        )
+
+        save_pose_coordinates(
+            rows,
+            masks,
+            output_csv_path,
+            output_mask_path
+        )
+
+    print("\nAll videos processed.")
