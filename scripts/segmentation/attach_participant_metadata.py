@@ -105,6 +105,10 @@ def load_metadata(metadata_path):
 def attach_metadata_to_file(gaze_locations_path, metadata_df, output_path):
     """
     Attach participant metadata to one per-video gaze-location CSV.
+
+    Saves:
+      1. Main file with only rows that have metadata
+      2. Separate missing-metadata file for rows without metadata
     """
     gaze_df = pd.read_csv(gaze_locations_path)
 
@@ -117,25 +121,34 @@ def attach_metadata_to_file(gaze_locations_path, metadata_df, output_path):
         how="left"
     )
 
-    missing_metadata = merged_df["diagnosis_group"].isna().sum()
+    has_metadata = merged_df["diagnosis_group"].notna()
+
+    matched_df = merged_df[has_metadata].copy()
+    missing_df = merged_df[~has_metadata].copy()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    merged_df.to_csv(output_path, index=False)
+
+    matched_df.to_csv(output_path, index=False)
+
+    missing_output_path = output_path.parent / output_path.name.replace(
+        "_with_metadata.csv",
+        "_missing_metadata.csv"
+    )
+    missing_df.to_csv(missing_output_path, index=False)
 
     print(f"Saved metadata-enriched file to: {output_path}")
+    print(f"  Kept rows with metadata: {len(matched_df)}")
+    print(f"  Saved rows missing metadata: {len(missing_df)}")
 
-    if missing_metadata > 0:
+    if len(missing_df) > 0:
         missing_participants = sorted(
-            merged_df.loc[
-                merged_df["diagnosis_group"].isna(),
-                "participant_id"
-            ].dropna().unique()
+            missing_df["participant_id"].dropna().unique()
         )
 
-        print(f"  Warning: {missing_metadata} row(s) missing metadata.")
         print(f"  Missing participant IDs: {missing_participants}")
+        print(f"  Missing metadata file: {missing_output_path}")
 
-    return merged_df
+    return matched_df
 
 
 def attach_metadata_all_videos(gaze_locations_root, metadata_path, output_root):
