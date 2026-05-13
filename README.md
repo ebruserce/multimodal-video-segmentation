@@ -402,23 +402,6 @@ Rendering videos can be slow, so this step is disabled by default.
 
 ---
 
-# Sharing Without MediaPipe
-
-MediaPipe can be difficult to set up depending on the system environment. To make it easier for collaborators to run the downstream pipeline, one option is to share the already-generated pose outputs instead of requiring them to run MediaPipe.
-
-For a given video, share:
-
-```text
-data/landmarks/frames/[video_name]_pose.csv
-data/landmarks/frames/[video_name]_masks.npy
-```
-
-Then the collaborator can run the remaining scripts without running `pose_coordinates.py`.
-
-This is useful if the collaborator only needs to test segmentation, gaze classification, validation, or group-difference analysis.
-
----
-
 # Current Limitations and Assumptions
 
 ## Body Mapping Bug
@@ -443,11 +426,11 @@ The activity region is currently estimated as the area between the two actors. I
 
 This assumes that the shared activity space does not substantially change over time.
 
-## Actor Assignment
+## Actor Assignment and General Video Structure
 
 Actors are currently assigned based on left/right ordering in the frame.
 
-This works for the current videos but may fail if MediaPipe swaps detections between actors.
+This works for the current videos but may fail if MediaPipe swaps detections between actors, or if a video with less than two actors is used.
 
 ## Coordinate Assumptions
 
