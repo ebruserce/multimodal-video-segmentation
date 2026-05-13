@@ -35,7 +35,7 @@ The immediate goal is to compare predicted AOIs against the original AOI labels 
 | `gaze_locations.py` | Classifies gaze points into AOIs |
 | `validate.py` | Evaluates AOI prediction accuracy across head dilation levels |
 | `attach_participant_metadata.py` | Adds participant diagnosis and age metadata |
-| `main.py` | Runs the full pipeline |
+| `main.py` | Runs the full pipeline (NOT TESTED YET WITH UPDATED CODE)|
 
 ---
 
