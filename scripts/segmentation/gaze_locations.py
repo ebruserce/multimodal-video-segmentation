@@ -1,3 +1,4 @@
+# Ebru Serce, 2026
 import csv
 import yaml
 import cv2
@@ -186,16 +187,17 @@ def compute_gaze_locations(gaze_csv_path, seg_csv_path, mask_npy_path,
 
         body_mask_canvas = None
         if frame_idx is not None and frame_idx < len(masks):
-            body_mask_vid = masks[frame_idx]
-            body_mask_canvas = np.zeros((canvas_h, canvas_w), dtype=bool)
+            body_mask_canvas = None
+            if frame_idx is not None and frame_idx < len(masks):
+                body_mask_vid = masks[frame_idx]
+                body_mask_canvas = np.zeros((canvas_h, canvas_w), dtype=bool)
 
-            vy1 = max(0, -((canvas_h - vid_h) // 2))
-            vy2 = vy1 + (cy2 - cy1)
-            vx1 = max(0, -((canvas_w - vid_w) // 2))
-            vx2 = vx1 + (cx2 - cx1)
+                vy1 = max(0, -((canvas_h - vid_h) // 2))
+                vy2 = vy1 + (cy2 - cy1)
+                vx1 = max(0, -((canvas_w - vid_w) // 2))
+                vx2 = vx1 + (cx2 - cx1)
 
-            body_mask_canvas[cy1:cy2, cx1:cx2] = body_mask_vid[vy1:vy2, vx1:vx2]
-
+                body_mask_canvas[cy1:cy2, cx1:cx2] = body_mask_vid[vy1:vy2, vx1:vx2]
         predicted_aoi = classify_gaze_point(
             sx, sy, seg, body_mask_canvas, canvas_w, canvas_h
         )
