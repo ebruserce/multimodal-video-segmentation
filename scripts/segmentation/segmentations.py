@@ -409,7 +409,7 @@ if __name__ == "__main__":
 
         rows = compute_segmentations(
             pose_csv, vid_w, vid_h,
-            head_dilation=cfg["settings"].get("head_dilation", 0.75),
+            head_dilation=cfg["settings"].get("head_dilation", 1.0), # set this to 1.0 based on optimal head dilation calculated
             hand_dilation=cfg["settings"].get("hand_dilation", 2.0),
             arm_dilation=cfg["settings"].get("arm_dilation", 0.45),
             activity_dilation=cfg["settings"].get("activity_dilation", 1.0),
